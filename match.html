@@ -1,0 +1,363 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Match Grid Puzzle</title>
+    <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet">
+    <style>
+        body {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            margin: 0;
+            background-color: #f0f0f0;
+            font-family: 'Press Start 2P', cursive;
+            user-select: none;
+        }
+        #game-container {
+            position: relative;
+            width: 90%;
+            max-width: 600px;
+            margin-bottom: 20px;
+        }
+        #grid-container {
+            display: grid;
+            grid-template-columns: repeat(6, 1fr); /* Start with 6 columns, adjusted by JS */
+            gap: 8px;
+            padding: 8px;
+            border-radius: 12px;
+            background-color: #423f3e;
+            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
+            touch-action: manipulation; /* Important for mobile touch */
+        }
+        .tile {
+            aspect-ratio: 1; /* Keep tiles square-shaped */
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.5em;
+            cursor: pointer;
+            transition: transform 0.2s, box-shadow 0.2s;
+            background-color: #f5f5f5;
+            box-shadow: 2px 2px 4px rgba(0, 0, 0, 0.1);
+        }
+        .tile:active {
+            transform: scale(0.9);
+            box-shadow: 1px 1px 2px rgba(0, 0, 0, 0.1);
+        }
+        .matched {
+            background-color: #888;
+            color: #888;
+            box-shadow: none;
+            transform: scale(1.2); /* Make matched tiles slightly larger */
+        }
+        #message-box {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background-color: rgba(0, 0, 0, 0.8);
+            color: white;
+            padding: 20px;
+            border-radius: 12px;
+            font-size: 1.2em;
+            display: none;
+        }
+        #message-box button {
+            margin-top: 10px;
+            padding: 8px 16px;
+            font-size: 0.9em;
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            transition: background-color 0.3s;
+            font-family: 'Press Start 2P', cursive;
+        }
+        #message-box button:hover {
+            background-color: #45a049;
+        }
+        .game-over #grid-container .tile:not(.matched) {
+            background-color: #ccc;
+            cursor: not-allowed;
+        }
+        #controls {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin-bottom: 20px;
+            width: 90%;
+            max-width: 600px;
+        }
+        #reset-button, #mute-button {
+            padding: 10px 15px;
+            font-size: 0.8em;
+            background-color: #00B8D4;
+            color: white;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: background-color 0.3s;
+            font-family: 'Press Start 2P', cursive;
+            margin: 0 10px;
+        }
+        #reset-button:hover, #mute-button:hover {
+            background-color: #00869e;
+        }
+        #mute-button.muted {
+            background-color: #888;
+        }
+        #score-display {
+            font-size: 1em;
+            color: #555;
+            margin-top: 10px;
+        }
+    </style>
+</head>
+<body>
+    <div id="game-container">
+        <div id="grid-container">
+            </div>
+        <div id="message-box">
+            <p id="message-text"></p>
+            <button id="message-button">OK</button>
+        </div>
+    </div>
+    <div id="controls">
+        <button id="reset-button">Reset</button>
+        <button id="mute-button">Mute</button>
+    </div>
+
+    <div id="score-display">Score: <span id="score">0</span></div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/tone/14.8.49/Tone.js"></script>
+    <script>
+        // --- Game Setup ---
+        let gridSize = { rows: 3, cols: 6 }; // Start with 3x6 grid
+        let grid = [];
+        let selectedTiles = [];
+        let messageBox = document.getElementById('message-box');
+        let messageText = document.getElementById('message-text');
+        let messageButton = document.getElementById('message-button');
+        let gridContainer = document.getElementById('grid-container');
+        let resetButton = document.getElementById('reset-button');
+        let scoreDisplay = document.getElementById('score');
+        let muteButton = document.getElementById('mute-button');
+        let score = 0;
+        let isMuted = false;
+        let gameStarted = false;
+
+        // --- Sound Effects (Tone.js) ---
+        const synth = new Tone.Synth().toDestination();
+
+        function playMatchSound() {
+            if (!isMuted) {
+                synth.triggerAttackRelease("C4", "8n");
+            }
+        }
+
+        function playGameOverSound() {
+            if (!isMuted) {
+                const polySynth = new Tone.PolySynth().toDestination();
+                polySynth.triggerAttackRelease(["C2", "E2", "G2", "Bb2"], "2n");
+            }
+        }
+
+        // --- Helper Functions ---
+        /**
+         * Creates a 2D array with the specified dimensions.
+         * @param {number} rows - The number of rows.
+         * @param {number} cols - The number of columns.
+         * @param {any} defaultValue - The default value for each cell.
+         * @returns {Array<Array<any>>} A 2D array.
+         */
+        function createEmptyGrid(rows, cols, defaultValue = null) {
+            return Array(rows).fill(null).map(() => Array(cols).fill(defaultValue));
+        }
+
+        /**
+         * Shuffles an array using the Fisher-Yates algorithm.
+         * @param {Array<any>} array - The array to shuffle.
+         * @returns {Array<any>} The shuffled array.
+         */
+        function shuffleArray(array) {
+            let currentIndex = array.length, randomIndex;
+            while (currentIndex != 0) {
+                randomIndex = Math.floor(Math.random() * currentIndex);
+                currentIndex--;
+                [array[currentIndex], array[randomIndex]] = [array[randomIndex], array[currentIndex]];
+            }
+            return array;
+        }
+
+        // --- Game Logic Functions ---
+
+        /**
+         * Generates the game grid with random tile values.
+         */
+        function generateGrid() {
+            grid = createEmptyGrid(gridSize.rows, gridSize.cols);
+            const numPairs = (gridSize.rows * gridSize.cols) / 2;
+            const tileValues = [];
+            for (let i = 1; i <= numPairs; i++) {
+                tileValues.push(i, i); // Each value appears twice
+            }
+            const shuffledValues = shuffleArray(tileValues);
+
+            let valueIndex = 0;
+            for (let i = 0; i < gridSize.rows; i++) {
+                for (let j = 0; j < gridSize.cols; j++) {
+                    grid[i][j] = shuffledValues[valueIndex++];
+                }
+            }
+        }
+
+        /**
+        * Renders the game grid in the UI.
+        */
+        function renderGrid() {
+            gridContainer.innerHTML = ''; // Clear the grid
+            for (let i = 0; i < gridSize.rows; i++) {
+                for (let j = 0; j < gridSize.cols; j++) {
+                    const tileValue = grid[i][j];
+                    const tile = document.createElement('div');
+                    tile.classList.add('tile');
+                    tile.textContent = tileValue;
+                    tile.dataset.row = i;
+                    tile.dataset.col = j;
+                    tile.addEventListener('click', handleTileClick); // Use generic handler
+                    tile.addEventListener('touchstart', handleTileClick);
+                    gridContainer.appendChild(tile);
+                }
+            }
+            // Adjust grid layout based on number of columns
+            gridContainer.style.gridTemplateColumns = `repeat(${gridSize.cols}, 1fr)`;
+        }
+
+        /**
+         * Handles a tile click event.
+         * @param {MouseEvent | TouchEvent} event - The click or touch event.
+         */
+        function handleTileClick(event) {
+            const tileElement = event.target;
+             // Prevent click if it is not a tile or the game is over.
+            if (!tileElement.classList.contains('tile') || selectedTiles.length >= 2 || tileElement.classList.contains('matched')) {
+                return;
+            }
+
+            const row = parseInt(tileElement.dataset.row); // Safe parsing from string
+            const col = parseInt(tileElement.dataset.col);
+            const tileValue = grid[row][col];
+
+            tileElement.classList.add('selected');
+            selectedTiles.push({ row, col, value: tileValue, element: tileElement });
+
+            if (selectedTiles.length === 2) {
+                const [tile1, tile2] = selectedTiles;
+                if (tile1.value === tile2.value) {
+                    // Match found!
+                    tile1.element.classList.add('matched');
+                    tile2.element.classList.add('matched');
+                    playMatchSound();
+                    score += 2;
+                    scoreDisplay.textContent = score;
+                    selectedTiles = [];
+                    checkForGameOver();
+                } else {
+                    // No match
+                    setTimeout(() => {
+                        tile1.element.classList.remove('selected');
+                        tile2.element.classList.remove('selected');
+                        selectedTiles = [];
+                    }, 500); // Short delay to show the tiles
+                }
+            }
+        }
+
+        /**
+         * Checks if the game is over.
+         */
+        function checkForGameOver() {
+            let matchedCount = 0;
+            const tiles = gridContainer.querySelectorAll('.tile'); //Efficient, gets only tiles in the container
+            tiles.forEach(tile => {
+                if (tile.classList.contains('matched')) {
+                    matchedCount++;
+                }
+            });
+            if (matchedCount === gridSize.rows * gridSize.cols) {
+                playGameOverSound();
+                gameStarted = false;
+                document.body.classList.add('game-over'); // apply game-over class to body
+                showMessage('Game Over! Your score: ' + score, startGame); // Pass startGame as the callback
+            }
+        }
+
+        /**
+         * Displays a message box with the specified text and an optional callback function for the button.
+         * @param {string} text - The message text.
+         * @param {function} buttonCallback - The function to call when the button is clicked.
+         */
+        function showMessage(text, buttonCallback = null) {
+            messageText.textContent = text;
+            messageBox.style.display = 'block';
+            messageButton.onclick = () => {
+                messageBox.style.display = 'none';
+                if (buttonCallback) {
+                    buttonCallback(); // Call the callback if provided
+                }
+            };
+        }
+
+        /**
+         * Resets the game to its initial state.
+         */
+        function resetGame() {
+          score = 0;
+          scoreDisplay.textContent = score;
+          document.body.classList.remove('game-over');
+          startGame();
+        }
+
+        /**
+         * Starts (or restarts) the game.
+         * This function is called when the game is initialized, and when the reset button is clicked.
+         */
+        function startGame() {
+            gameStarted = true;
+            // Determine the grid size based on the device width.
+            const screenWidth = window.innerWidth;
+            if (screenWidth < 400) {
+                gridSize = { rows: 2, cols: 4 }; // Smaller grid for very small screens
+            }
+            else if (screenWidth < 600) {
+                gridSize = { rows: 3, cols: 6 }; // 3x6 on small tablets
+            }
+            else {
+                gridSize = { rows: 4, cols: 8 }; // Default 4x8 grid for larger screens
+            }
+            generateGrid();
+            renderGrid();
+        }
+
+        // --- Event Listeners ---
+        resetButton.addEventListener('click', resetGame);
+        muteButton.addEventListener('click', () => {
+            isMuted = !isMuted;
+            muteButton.classList.toggle('muted', isMuted);
+            muteButton.textContent = isMuted ? 'Unmute' : 'Mute';
+        });
+
+        // --- Initialize the game ---
+        startGame(); // Start the game when the page loads
+
+    </script>
+</body>
+</html>
+
+
