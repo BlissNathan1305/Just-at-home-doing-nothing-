@@ -1,1 +1,1 @@
-Latest effort
+I am a child of God
